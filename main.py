@@ -14,7 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,  # Change from INFO to ERROR
+    filename='network_scanner.log',  # Add log file
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -154,9 +155,9 @@ def get_ping_command(target_ip):
 
 def ping_test(target_ip):
     try:
-        logger.debug(f"Pinging {target_ip}...")
+        logger.info(f"Pinging {target_ip}...")  # Changed from debug to info
         ping_cmd = get_ping_command(target_ip)
-        logger.debug(f"Using ping command: {' '.join(ping_cmd)}")
+        logger.info(f"Using ping command: {' '.join(ping_cmd)}")  # Changed from debug to info
         
         ping = subprocess.Popen(
             ping_cmd,
@@ -318,13 +319,33 @@ def analyze_host(ip, ports, display):
 
     return host_info
 
+def get_subnet_input():
+    while True:
+        try:
+            subnet = input("Enter subnet to scan (e.g., 192.168.1.0/24): ").strip()
+            # Validate subnet format
+            IPv4Network(subnet)
+            return subnet
+        except ValueError as e:
+            print(f"Invalid subnet format: {e}")
+            print("Please use CIDR notation (e.g., 192.168.1.0/24)")
+
 def main(stdscr):
-    # Initialize curses
+    # Get subnet from user before initializing curses
+    curses.endwin()  # Temporarily exit curses mode
+    subnet = get_subnet_input()
+    
+    # Re-initialize curses
+    stdscr.refresh()
     curses.curs_set(0)  # Hide cursor
     
     network = IPv4Network(subnet)
     total_hosts = sum(1 for _ in network.hosts())
     display = ScanDisplay(stdscr, total_hosts)
+    
+    # Update the display with chosen subnet
+    display.status_message = f"Starting scan of subnet: {subnet}"
+    display.update()
     
     start_time = datetime.now()
     
