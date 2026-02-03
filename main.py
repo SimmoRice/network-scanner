@@ -49,14 +49,20 @@ class ScanDisplay:
         self.open_ports = defaultdict(list)
         self.status_message = ""
         self.host_info = {}
-        
+
+        # View mode and sorting
+        self.view_mode = "list"  # "list" or "table"
+        self.sort_column = "ip"  # "ip", "os", "ports"
+        self.sort_reverse = False
+
         # Initialize colors
         curses.start_color()
         curses.use_default_colors()
         curses.init_pair(1, curses.COLOR_GREEN, -1)
         curses.init_pair(2, curses.COLOR_RED, -1)
         curses.init_pair(3, curses.COLOR_YELLOW, -1)
-        
+        curses.init_pair(4, curses.COLOR_CYAN, -1)
+
         # Enable scrolling
         self.stdscr.scrollok(True)
 
@@ -65,7 +71,7 @@ class ScanDisplay:
             self.stdscr.clear()
             max_y, max_x = self.stdscr.getmaxyx()
             y = 0
-            
+
             # Header section
             header = f"Network Scanner - Subnet: {subnet}"
             if len(header) > max_x:
@@ -77,6 +83,13 @@ class ScanDisplay:
             progress = (self.hosts_scanned / self.total_hosts) * 100
             progress_str = f"Progress: [{self.hosts_scanned}/{self.total_hosts}] {progress:.1f}%"
             self.stdscr.addstr(y, 0, progress_str)
+            y += 1
+
+            # View mode indicator
+            view_indicator = f"View: {self.view_mode.upper()} | Sort: {self.sort_column.upper()} {'▼' if self.sort_reverse else '▲'} | [v] Toggle View | [i/o/p] Sort"
+            if len(view_indicator) > max_x:
+                view_indicator = view_indicator[:max_x-3] + "..."
+            self.stdscr.addstr(y, 0, view_indicator, curses.color_pair(4))
             y += 2
 
             # Current activity
@@ -87,48 +100,11 @@ class ScanDisplay:
                 self.stdscr.addstr(y, 0, current_str)
             y += 2
 
-            # Active hosts section
-            if self.active_hosts:
-                self.stdscr.addstr(y, 0, "Active Hosts:", curses.A_BOLD)
-                y += 1
-
-                for host in sorted(self.active_hosts):
-                    if y >= max_y - 3:
-                        break
-                    
-                    # Host line with OS info
-                    host_str = f"► {host}"
-                    if host in self.host_info:
-                        info = self.host_info[host]
-                        if info.os != "Unknown":
-                            host_str += f" ({info.os})"
-                    
-                    if len(host_str) > max_x:
-                        host_str = host_str[:max_x-3] + "..."
-                    self.stdscr.addstr(y, 0, host_str, curses.color_pair(1))
-                    y += 1
-
-                    # Port and service information
-                    ports = self.open_ports[host]
-                    if ports:
-                        for port in sorted(ports):
-                            if y >= max_y - 1:
-                                break
-                            
-                            service_str = f"   ├─ {port}"
-                            if host in self.host_info and port in self.host_info[host].services:
-                                service = self.host_info[host].services[port]
-                                service_str += f" ({service['name']})"
-                                if service['banner']:
-                                    banner = service['banner'].replace('\n', ' ')[:40]
-                                    service_str += f": {banner}"
-                            
-                            if len(service_str) > max_x:
-                                service_str = service_str[:max_x-3] + "..."
-                            
-                            self.stdscr.addstr(y, 0, service_str, curses.color_pair(3))
-                            y += 1
-                    y += 1
+            # Render based on view mode
+            if self.view_mode == "table":
+                y = self._render_table_view(y, max_y, max_x)
+            else:
+                y = self._render_list_view(y, max_y, max_x)
 
             # Status message at the bottom
             if self.status_message and y < max_y:
@@ -138,6 +114,137 @@ class ScanDisplay:
 
         except curses.error:
             pass
+
+    def _render_list_view(self, y, max_y, max_x):
+        """Render the traditional list view"""
+        if self.active_hosts:
+            self.stdscr.addstr(y, 0, "Active Hosts:", curses.A_BOLD)
+            y += 1
+
+            for host in sorted(self.active_hosts):
+                if y >= max_y - 3:
+                    break
+
+                # Host line with OS info
+                host_str = f"► {host}"
+                if host in self.host_info:
+                    info = self.host_info[host]
+                    if info.os != "Unknown":
+                        host_str += f" ({info.os})"
+
+                if len(host_str) > max_x:
+                    host_str = host_str[:max_x-3] + "..."
+                self.stdscr.addstr(y, 0, host_str, curses.color_pair(1))
+                y += 1
+
+                # Port and service information
+                ports = self.open_ports[host]
+                if ports:
+                    for port in sorted(ports):
+                        if y >= max_y - 1:
+                            break
+
+                        service_str = f"   ├─ {port}"
+                        if host in self.host_info and port in self.host_info[host].services:
+                            service = self.host_info[host].services[port]
+                            service_str += f" ({service['name']})"
+                            if service['banner']:
+                                banner = service['banner'].replace('\n', ' ')[:40]
+                                service_str += f": {banner}"
+
+                        if len(service_str) > max_x:
+                            service_str = service_str[:max_x-3] + "..."
+
+                        self.stdscr.addstr(y, 0, service_str, curses.color_pair(3))
+                        y += 1
+                y += 1
+        return y
+
+    def _render_table_view(self, y, max_y, max_x):
+        """Render the table view with sortable columns"""
+        if not self.active_hosts:
+            return y
+
+        # Table header
+        header = f"{'IP Address':<15} │ {'Operating System':<20} │ {'Ports':<6} │ {'Services':<30}"
+        if len(header) > max_x:
+            header = header[:max_x-3] + "..."
+        self.stdscr.addstr(y, 0, header, curses.A_BOLD | curses.color_pair(4))
+        y += 1
+
+        # Separator line
+        separator = "─" * min(max_x - 1, len(header))
+        self.stdscr.addstr(y, 0, separator, curses.color_pair(4))
+        y += 1
+
+        # Get sorted host data
+        sorted_hosts = self._get_sorted_hosts()
+
+        # Render each host as a table row
+        for host in sorted_hosts:
+            if y >= max_y - 1:
+                break
+
+            # Get host information
+            os_info = "Unknown"
+            if host in self.host_info:
+                os_info = self.host_info[host].os
+
+            ports = self.open_ports[host]
+            port_count = len(ports)
+
+            # Get top services
+            services = []
+            if ports:
+                for port in sorted(ports)[:3]:  # Show top 3 services
+                    service_name = COMMON_PORTS.get(port, str(port))
+                    services.append(service_name)
+            services_str = ", ".join(services)
+            if len(ports) > 3:
+                services_str += f" +{len(ports) - 3}"
+
+            # Format row
+            row = f"{host:<15} │ {os_info:<20} │ {port_count:<6} │ {services_str:<30}"
+            if len(row) > max_x:
+                row = row[:max_x-3] + "..."
+
+            self.stdscr.addstr(y, 0, row, curses.color_pair(1))
+            y += 1
+
+        return y
+
+    def _get_sorted_hosts(self):
+        """Sort hosts based on current sort column and direction"""
+        hosts_list = list(self.active_hosts)
+
+        if self.sort_column == "ip":
+            # Sort by IP address (convert to tuple of ints for proper sorting)
+            hosts_list.sort(key=lambda ip: tuple(int(part) for part in ip.split('.')),
+                          reverse=self.sort_reverse)
+        elif self.sort_column == "os":
+            # Sort by operating system
+            hosts_list.sort(key=lambda ip: self.host_info.get(ip, HostInfo()).os,
+                          reverse=self.sort_reverse)
+        elif self.sort_column == "ports":
+            # Sort by number of open ports
+            hosts_list.sort(key=lambda ip: len(self.open_ports[ip]),
+                          reverse=self.sort_reverse)
+
+        return hosts_list
+
+    def toggle_view(self):
+        """Toggle between list and table view"""
+        self.view_mode = "table" if self.view_mode == "list" else "list"
+        self.update()
+
+    def set_sort_column(self, column):
+        """Set the sort column and toggle direction if already sorted by this column"""
+        if self.sort_column == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            self.sort_reverse = False
+        self.update()
 
     def update_host_info(self, ip, info):
         self.host_info[ip] = info
@@ -330,29 +437,60 @@ def get_subnet_input():
             print(f"Invalid subnet format: {e}")
             print("Please use CIDR notation (e.g., 192.168.1.0/24)")
 
+def input_handler(stdscr, display, scan_active):
+    """Handle keyboard input in a separate thread"""
+    stdscr.nodelay(True)  # Non-blocking input
+    while scan_active[0] or True:  # Continue after scan for viewing results
+        try:
+            key = stdscr.getch()
+            if key != -1:  # Key was pressed
+                if key == ord('v') or key == ord('V'):
+                    display.toggle_view()
+                elif key == ord('i') or key == ord('I'):
+                    display.set_sort_column('ip')
+                elif key == ord('o') or key == ord('O'):
+                    display.set_sort_column('os')
+                elif key == ord('p') or key == ord('P'):
+                    display.set_sort_column('ports')
+                elif key == ord('q') or key == ord('Q'):
+                    # User wants to quit
+                    return
+        except:
+            pass
+        threading.Event().wait(0.1)  # Small delay to prevent high CPU usage
+
 def main(stdscr):
     # Get subnet from user before initializing curses
     curses.endwin()  # Temporarily exit curses mode
     subnet = get_subnet_input()
-    
+
     # Re-initialize curses
     stdscr.refresh()
     curses.curs_set(0)  # Hide cursor
-    
+    stdscr.nodelay(True)  # Enable non-blocking input
+
     network = IPv4Network(subnet)
     total_hosts = sum(1 for _ in network.hosts())
     display = ScanDisplay(stdscr, total_hosts)
-    
+
     # Update the display with chosen subnet
-    display.status_message = f"Starting scan of subnet: {subnet}"
+    display.status_message = f"Starting scan of subnet: {subnet} | Press 'v' to toggle view, 'i/o/p' to sort, 'q' to quit"
     display.update()
-    
+
     start_time = datetime.now()
-    
+
+    # Flag to track scan status
+    scan_active = [True]
+
+    # Start input handler thread
+    input_thread = threading.Thread(target=input_handler, args=(stdscr, display, scan_active))
+    input_thread.daemon = True
+    input_thread.start()
+
     # Add hosts to queue
     for ip in network.hosts():
         hosts.put(ip)
-    
+
     # Start host discovery threads
     host_threads = []
     for _ in range(min(thread_count, hosts.qsize())):
@@ -377,10 +515,25 @@ def main(stdscr):
 
     end_time = datetime.now()
     duration = end_time - start_time
-    
-    display.status_message = f"Scan completed in {duration}"
+    scan_active[0] = False
+
+    display.status_message = f"Scan completed in {duration} | Press 'v' to toggle view, 'i/o/p' to sort, 'q' to quit"
     display.update()
-    stdscr.getch()  # Wait for keypress before exit
+
+    # Wait for user to quit
+    stdscr.nodelay(False)  # Make getch blocking
+    while True:
+        key = stdscr.getch()
+        if key == ord('v') or key == ord('V'):
+            display.toggle_view()
+        elif key == ord('i') or key == ord('I'):
+            display.set_sort_column('ip')
+        elif key == ord('o') or key == ord('O'):
+            display.set_sort_column('os')
+        elif key == ord('p') or key == ord('P'):
+            display.set_sort_column('ports')
+        elif key == ord('q') or key == ord('Q'):
+            break
 
 if __name__ == "__main__":
     curses.wrapper(main)
